@@ -1382,9 +1382,11 @@
             <div class="header-actions">
                 <div class="save-badge" id="saveBadge"></div>
                 <span id="autoSaveMsg" style="font-size:11px;color:#a5f3fc;display:none;font-weight:500;">✓ 자동저장됨</span>
-                <button class="primary" onclick="app.syncToFile()" title="OneDrive 동기화용 JSON 저장">☁️ 동기화</button>
+                <button class="primary" onclick="app.gistSync('upload')" title="GitHub 클라우드 저장">☁️ 업로드</button>
+                <button class="primary" onclick="app.gistSync('download')" title="GitHub 클라우드 불러오기" style="background:linear-gradient(135deg,#10b981,#059669);">📥 다운로드</button>
+                <button class="secondary" onclick="app.gistSetup()" style="font-size:11px;padding:6px 10px;">⚙️ 동기화설정</button>
                 <button class="secondary" onclick="app.saveToFile()" style="font-size:11px;padding:6px 10px;">💾 내보내기</button>
-                <button class="secondary" onclick="app.importFromFile()" style="font-size:11px;padding:6px 10px;">📥 가져오기</button>
+                <button class="secondary" onclick="app.importFromFile()" style="font-size:11px;padding:6px 10px;">📂 가져오기</button>
                 <button class="success" onclick="app.setAsDefault()" style="font-size:11px;padding:6px 10px;">📌 기본값</button>
                 <button class="danger" onclick="app.resetData()" style="font-size:11px;padding:6px 10px;">🔄 초기화</button>
             </div>
@@ -1784,7 +1786,189 @@
                 }).catch(function() {});
             },
 
-            // ☁️ 동기화 버튼 핸들러
+            // ☁️ GitHub Gist 동기화
+            gistSetup: function() {
+                var token = localStorage.getItem('gist_token') || '';
+                var gistId = localStorage.getItem('gist_id') || '';
+                var newToken = prompt(
+                    '⚙️ GitHub 동기화 설정\n\n' +
+                    'GitHub Personal Access Token을 입력하세요.\n' +
+                    '(github_pat_ 로 시작하는 문자열)\n\n' +
+                    '현재 토큰: ' + (token ? '✅ 설정됨' : '❌ 미설정') + '\n' +
+                    '현재 Gist: ' + (gistId ? '✅ 연결됨' : '❌ 미연결'),
+                    token
+                );
+                if (newToken === null) return;
+                if (newToken.trim()) {
+                    localStorage.setItem('gist_token', newToken.trim());
+                    if (!gistId) {
+                        // Gist ID 없으면 → 기존 Gist 자동 검색 후 없으면 새로 생성
+                        this._findOrCreateGist(newToken.trim());
+                    } else {
+                        alert('✅ 토큰이 저장되었습니다.\n\n☁️ 업로드/📥 다운로드 버튼으로 동기화하세요.');
+                    }
+                } else {
+                    localStorage.removeItem('gist_token');
+                    localStorage.removeItem('gist_id');
+                    alert('동기화 설정이 초기화되었습니다.');
+                }
+            },
+
+            _findOrCreateGist: function(token) {
+                var self = this;
+                // 1단계: 내 Gist 목록에서 'Life Planner Data Sync' 검색
+                fetch('https://api.github.com/gists?per_page=100', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                }).then(function(r) {
+                    if (!r.ok) throw new Error('HTTP ' + r.status);
+                    return r.json();
+                }).then(function(gists) {
+                    // life-planner-data.json 파일이 있는 Gist 찾기
+                    var found = null;
+                    for (var i = 0; i < gists.length; i++) {
+                        if (gists[i].files && gists[i].files['life-planner-data.json']) {
+                            found = gists[i];
+                            break;
+                        }
+                    }
+                    if (found) {
+                        localStorage.setItem('gist_id', found.id);
+                        var updatedAt = new Date(found.updated_at).toLocaleString('ko-KR');
+                        alert('✅ 기존 동기화 데이터를 자동으로 찾았습니다!\n\n' +
+                            '마지막 업데이트: ' + updatedAt + '\n\n' +
+                            '📥 다운로드 버튼으로 데이터를 불러오세요.');
+                    } else {
+                        // 못 찾으면 새로 생성
+                        self._createGist(token);
+                    }
+                }).catch(function(e) {
+                    alert('❌ Gist 검색 실패: ' + e.message + '\n\n새 Gist를 생성합니다.');
+                    self._createGist(token);
+                });
+            },
+
+            _createGist: function(token) {
+                var self = this;
+                var data = {
+                    description: 'Life Planner Data Sync',
+                    public: false,
+                    files: {
+                        'life-planner-data.json': {
+                            content: JSON.stringify({ items: [], reflections: {}, projects: [], exportDate: new Date().toISOString() })
+                        }
+                    }
+                };
+                fetch('https://api.github.com/gists', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Bearer ' + token,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                }).then(function(r) { return r.json(); })
+                .then(function(gist) {
+                    if (gist.id) {
+                        localStorage.setItem('gist_id', gist.id);
+                        alert('✅ 동기화 설정 완료!\n\n새 Gist가 생성되었습니다.\n☁️ 업로드 버튼으로 데이터를 저장하세요.');
+                    } else {
+                        alert('❌ Gist 생성 실패\n\n토큰을 확인해주세요.\n' + (gist.message || ''));
+                    }
+                }).catch(function(e) {
+                    alert('❌ 네트워크 오류: ' + e.message);
+                });
+            },
+
+            gistSync: function(mode) {
+                var token = localStorage.getItem('gist_token');
+                var gistId = localStorage.getItem('gist_id');
+                if (!token || !gistId) {
+                    alert('⚙️ 먼저 동기화 설정을 해주세요.\n\n[동기화설정] 버튼을 눌러 GitHub 토큰을 입력하세요.');
+                    return;
+                }
+                if (mode === 'upload') {
+                    this._gistUpload(token, gistId);
+                } else {
+                    this._gistDownload(token, gistId);
+                }
+            },
+
+            _gistUpload: function(token, gistId) {
+                var self = this;
+                var exportData = {
+                    items: this.items,
+                    reflections: this.reflections,
+                    projects: this.projects,
+                    exportDate: new Date().toISOString(),
+                    device: navigator.userAgent.indexOf('Mobile') > -1 ? 'mobile' : 'PC'
+                };
+                var data = {
+                    files: {
+                        'life-planner-data.json': {
+                            content: JSON.stringify(exportData)
+                        }
+                    }
+                };
+                fetch('https://api.github.com/gists/' + gistId, {
+                    method: 'PATCH',
+                    headers: {
+                        'Authorization': 'Bearer ' + token,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                }).then(function(r) {
+                    if (!r.ok) throw new Error('HTTP ' + r.status);
+                    return r.json();
+                }).then(function() {
+                    try { localStorage.setItem(_lsKey('lastSync'), new Date().toISOString()); } catch(e) {}
+                    self._showSyncMsg();
+                    var msg = document.getElementById('autoSaveMsg');
+                    if (msg) {
+                        msg.style.display = 'inline';
+                        msg.textContent = '☁️ 업로드 완료 ' + new Date().toLocaleTimeString('ko-KR');
+                    }
+                }).catch(function(e) {
+                    alert('❌ 업로드 실패: ' + e.message + '\n\n토큰 또는 Gist ID를 확인해주세요.');
+                });
+            },
+
+            _gistDownload: function(token, gistId) {
+                var self = this;
+                fetch('https://api.github.com/gists/' + gistId, {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                }).then(function(r) {
+                    if (!r.ok) throw new Error('HTTP ' + r.status);
+                    return r.json();
+                }).then(function(gist) {
+                    var file = gist.files['life-planner-data.json'];
+                    if (!file) throw new Error('데이터 파일을 찾을 수 없습니다.');
+                    var data = JSON.parse(file.content);
+                    var remoteDate = data.exportDate ? new Date(data.exportDate).toLocaleString('ko-KR') : '알 수 없음';
+                    var remoteDevice = data.device || '알 수 없음';
+                    var itemCount = (data.items || []).length;
+                    if (!confirm(
+                        '📥 클라우드 데이터 불러오기\n\n' +
+                        '저장 시각: ' + remoteDate + '\n' +
+                        '저장 기기: ' + remoteDevice + '\n' +
+                        '항목 수: ' + itemCount + '건\n\n' +
+                        '현재 기기의 데이터를 덮어씁니다.\n계속하시겠습니까?'
+                    )) return;
+                    if (Array.isArray(data.items)) self.items = data.items;
+                    if (data.reflections) self.reflections = data.reflections;
+                    if (Array.isArray(data.projects)) self.projects = data.projects;
+                    self.saveAll();
+                    self.render();
+                    var msg = document.getElementById('autoSaveMsg');
+                    if (msg) {
+                        msg.style.display = 'inline';
+                        msg.textContent = '📥 다운로드 완료 ' + new Date().toLocaleTimeString('ko-KR');
+                    }
+                    alert('✅ 데이터를 성공적으로 불러왔습니다!');
+                }).catch(function(e) {
+                    alert('❌ 다운로드 실패: ' + e.message);
+                });
+            },
+
+            // ☁️ (레거시) OneDrive 동기화 버튼 핸들러
             syncToFile: function() {
                 var self = this;
 
