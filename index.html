@@ -1955,7 +1955,7 @@
                     if (Array.isArray(data.items)) self.items = data.items;
                     if (data.reflections) self.reflections = data.reflections;
                     if (Array.isArray(data.projects)) self.projects = data.projects;
-                    self.saveAll();
+                    self.autoSave();
                     self.render();
                     var msg = document.getElementById('autoSaveMsg');
                     if (msg) {
